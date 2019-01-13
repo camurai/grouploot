@@ -5,12 +5,42 @@ var GroupLoot = GroupLoot || (function() {
     let player;
     let handouts = {};
     
+    /**
+     * Initiate the script
+     */
     const init = () => {
-        initLootBox();
+        initGroupLoot();
         initHandout(lootbox);
         updateHandouts();
     };
 
+    /**
+     * initial setup of the group loot by creating the "Group" character sheet
+     */
+    const initGroupLoot = () => {
+
+        lootbox = findObjs({
+                _type: "character",
+                name: "Group"
+        }, {caseInsensitive: true});
+
+        if(lootbox.length <= 0) {
+            // Create character object
+            lootbox = createObj("character", {
+                name: "Group"
+            });
+        }
+        else {
+            lootbox = lootbox[0];
+        }
+    };
+
+///// Chat Commands /////////
+
+    /**
+     * handles messaged in the roll20 chat
+     * @param {string} msg 
+     */
     const msgHandler = (msg) => {
         if (msg.type == 'api' && getMessageCommand(msg) == 'grouploot') {
             player = getObj('player', msg.playerid);
@@ -18,10 +48,18 @@ var GroupLoot = GroupLoot || (function() {
         }
     }
 
+    /**
+     * pulls the messgae command out of the message text
+     * @param {string} msg 
+     */
     const getMessageCommand = (msg) => {
         return msg.content.substring(1,msg.content.indexOf(" "));;
     }
 
+    /**
+     * runs the command from the message
+     * @param {string} msg 
+     */
     const runAllCommands = (msg) => {
         let args = getMessageArgs(msg);
         let command = msg.content.substring(msg.content.indexOf(" ")+1);
@@ -31,6 +69,29 @@ var GroupLoot = GroupLoot || (function() {
         runCommand(command, args);
     }
 
+    /**
+     * pulls the arguments out of the command text
+     * @param {string} msg 
+     */
+    const getMessageArgs = (msg) => {
+        let args = msg.content;
+        args = args.substring(args.indexOf(" ")+1);
+
+        if(args.indexOf(" ") === -1) {
+            args = "";
+        }
+        else{
+            args = args.substring(args.indexOf(" ")+1)
+        }
+
+        return args;
+    } 
+
+    /**
+     * runs the commands from the message
+     * @param {string} command 
+     * @param {string} args 
+     */
     const runCommand = (command, args) => {
         switch(command) {
             case "takemoney":
@@ -61,14 +122,64 @@ var GroupLoot = GroupLoot || (function() {
             case "update":
                 updateHandouts();
                 break;
-            case "openCharHandout":
+            case "linkCharHandout":
                 msgPlayer("generating Character Handout")
-                openCharHandout(getPlayerCharacter(player.id));
+                linkCharHandout(getPlayerCharacter(player.id));
                 break;
         }
         updateHandouts();
     }
 
+    /**
+     * gets the player character sheet in roll20 from the player id.
+     * @param {string} playerid 
+     */
+    const getPlayerCharacter = (playerid) =>{
+        let character;
+        let characters = findObjs({
+            _type:"character",
+            controlledby:playerid
+        })
+
+        if(characters) {
+            if(characters.length === 1) {
+                character = characters[0]                
+            }
+            else {
+
+                //TODO: if more then one, ask user which character to use
+                character = characters[0]                
+            }
+        }
+        else {
+            msgPlayer("Failed to get Player Character");
+            //TODO: send message that no character was found
+        }
+        return character;
+    }
+
+    /**
+     * sends a message to the player
+     * @param {string} msg 
+     */
+    const msgPlayer = (msg) => {
+        let target = "";
+        if(player) {
+            target = '/w ' + player.get("displayname") + ' ';
+        }
+        sendChat("GroupLoot", target + msg , null, {noarchive:true});
+    }
+
+
+///// Currency Transfering /////
+
+    /**
+     * transfer coins of specified type from source character to target character
+     * @param {string} coin 
+     * @param {int} ammount 
+     * @param {object} source 
+     * @param {object} target 
+     */
     const transferCurrency = (coin, ammount, source, target) => {
         let sourceattr;
         let targetattr;
@@ -114,6 +225,31 @@ var GroupLoot = GroupLoot || (function() {
         }
     }
 
+    /**
+     * gets the name character attribute object from the character sheet with the supplied id
+     * @param {string} name 
+     * @param {string} id 
+     */
+    const getAttr = (name, id) => {
+        if(!id) {
+            id = lootbox.id;
+        }
+        return findObjs({
+            _type:"attribute",
+            _characterid: id,
+            name: name
+        })[0];
+    }
+
+
+///// Item Transfers /////
+
+    /**
+     * transfer the id item from the source character to the target character
+     * @param {string} id 
+     * @param {object} source 
+     * @param {object} target 
+     */
     const transferItem = (id, source, target) => {
         let item;
         let prefix;
@@ -153,12 +289,10 @@ var GroupLoot = GroupLoot || (function() {
  
     }
 
-    const openCharHandout = (character) => {
-        initHandout(character);
-        updateHandout(character.id);
-        //TODO: set visiblity for new handout for character player and pop it open
-    }
-
+    /**
+     * get an object listing all the items of the identified character by id
+     * @param {string} charid 
+     */
     const getItems = (charid) => {
         let items = {};
 
@@ -183,83 +317,24 @@ var GroupLoot = GroupLoot || (function() {
             }
         });
         return items;
-
     }
 
-    const msgPlayer = (msg) => {
-        let target = "";
-        if(player) {
-            target = '/w ' + player.get("displayname") + ' ';
-        }
-        sendChat("GroupLoot", target + msg , null, {noarchive:true});
-    }
-    const getPlayerCharacter = (playerid) =>{
-        let character;
-        let characters = findObjs({
-            _type:"character",
-            controlledby:playerid
-        })
+//// Update Loot Handout ////
 
-        if(characters) {
-            if(characters.length === 1) {
-                character = characters[0]                
-            }
-            else {
-
-                //TODO: if more then one, ask user which character to use
-                character = characters[0]                
-            }
-        }
-        else {
-            msgPlayer("Failed to get Player Character");
-            //TODO: send message that no character was found
-        }
-        return character;
+    /**
+     * opens the Character sheet
+     * @param {object} character 
+     */
+    const linkCharHandout = (character) => {
+        initHandout(character);
+        updateHandout(character.id);
+        //TODO: set visiblity for new handout for character player and pop it open
     }
 
-    const getAttr = (name, id) => {
-        if(!id) {
-            id = lootbox.id;
-        }
-        return findObjs({
-            _type:"attribute",
-            _characterid: id,
-            name: name
-        })[0];
-    }
-
-    const getMessageArgs = (msg) => {
-        let args = msg.content;
-        args = args.substring(args.indexOf(" ")+1);
-
-        if(args.indexOf(" ") === -1) {
-            args = "";
-        }
-        else{
-            args = args.substring(args.indexOf(" ")+1)
-        }
-
-        return args;
-    }
-
-    const initLootBox = () => {
-
-        lootbox = findObjs({
-                _type: "character",
-                name: "Group"
-        }, {caseInsensitive: true});
-
-        if(lootbox.length <= 0) {
-            // Create character object
-            lootbox = createObj("character", {
-                name: "Group"
-            });
-        }
-        else {
-            lootbox = lootbox[0];
-        }
-    };
-
+    /**
+     * creates a loot handout for the supplied character
+     * @param {object} character 
+     */
     const initHandout = (character) => {
         let handoutPage;
         let id = character.id;
@@ -288,12 +363,19 @@ var GroupLoot = GroupLoot || (function() {
         handouts[id] = handoutPage;
     }
 
+    /**
+     * updates all handouts
+     */
     const updateHandouts = () => {
         for(let prop in handouts) {
             updateHandout(prop);
         }
     }
 
+    /**
+     * updates the handout of the character by id
+     * @param {string} charid 
+     */
     const updateHandout = (charid) => {
         handout = handouts[charid];
         handouttext = "<a href='`!grouploot update'>update</a></b>";
@@ -304,6 +386,10 @@ var GroupLoot = GroupLoot || (function() {
         handouts[charid].set("notes", handouttext);
     };
 
+    /**
+     * update the Currancy in the handout for the character by id
+     * @param {string} charid 
+     */
     const updateCurrency = (charid) => {
         startTable("currency");
         handouttext += "<tr><td><span style='{header}'><b>Coin</b></span></td><td><b>Qty</b></td>";
@@ -319,49 +405,12 @@ var GroupLoot = GroupLoot || (function() {
         endTable();
     };
 
-    const updateItems = (charid) => {
-        startTable("items");
-        handouttext += "<tr><td><b>Item</b></td><td><b>Qty</b></td><td><b>Description</b></td>";
-        if(charid === lootbox.id){
-            handouttext += "<td><b>Take</b></td>"
-        }
-        else {
-            handouttext += "<td><b>Give</b></td>";
-        }
-        handouttext += "</tr>";
-        let i = 0;
-        let itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
-        let itemCount = 0;
-        let itemDesc = "";
-        while(itemName !== "") {
-            itemCount = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcount");
-            itemDesc = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcontent");
-            addItem(itemName, itemCount, itemDesc, charid);
-
-            //get next itemname;
-            i++;
-            itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
-        }
-        endTable();
-        if(charid === lootbox.id){
-            handouttext +="<a href='`!grouploot openCharHandout'>Connect Personal Loot</a><br/>"
-            for(let prop in handouts) {
-                if(prop !== lootbox.id) {
-                    handouttext += '<a href="http://journal.roll20.net/handout/' + handouts[prop].id + '">'+handouts[prop].get("name") + '</a><br/>';
-
-                }
-            }
-        }
-    };
-
-    const startTable = (id) => {
-        handouttext +='<table style="{table}" id="'+ id +'"><tbody></tbody>';
-    };
-
-    const endTable = () => {
-        handouttext +="</tbody></table>";
-    };
-
+    /**
+     * add an attribute display (used for currency) to the loot handout
+     * @param {string} label 
+     * @param {string} id 
+     * @param {string} charid 
+     */
     const addAttr = (label, id, charid) => {
         let attrObj = findObjs({
             _type:"attribute",
@@ -369,7 +418,6 @@ var GroupLoot = GroupLoot || (function() {
             name:id
         })
 
-        //let attr = getAttrByName(lootbox.id, id);
         if(attrObj.length >= 1) {
             attrObj = attrObj[0];
         }
@@ -395,6 +443,52 @@ var GroupLoot = GroupLoot || (function() {
         }
     };
 
+    /**
+     *  update display of the items in the loot handout
+     * @param {string} charid 
+     */
+    const updateItems = (charid) => {
+        startTable("items");
+        handouttext += "<tr><td><b>Item</b></td><td><b>Qty</b></td><td><b>Description</b></td>";
+        if(charid === lootbox.id){
+            handouttext += "<td><b>Take</b></td>"
+        }
+        else {
+            handouttext += "<td><b>Give</b></td>";
+        }
+        handouttext += "</tr>";
+        let i = 0;
+        let itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+        let itemCount = 0;
+        let itemDesc = "";
+        while(itemName !== "") {
+            itemCount = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcount");
+            itemDesc = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcontent");
+            addItem(itemName, itemCount, itemDesc, charid);
+
+            //get next itemname;
+            i++;
+            itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+        }
+        endTable();
+        if(charid === lootbox.id){
+            handouttext +="<a href='`!grouploot linkCharHandout'>Connect Personal Loot</a><br/>"
+            for(let prop in handouts) {
+                if(prop !== lootbox.id) {
+                    handouttext += '<a href="http://journal.roll20.net/handout/' + handouts[prop].id + '">'+handouts[prop].get("name") + '</a><br/>';
+
+                }
+            }
+        }
+    };
+
+    /**
+     * add an item to the loot handout
+     * @param {string} name 
+     * @param {int} count 
+     * @param {string} desc 
+     * @param {string} charid 
+     */
     const addItem = (name, count, desc, charid ) => {
         handouttext += "<tr><td>" + name + "</td>" + 
             "<td> " + count + "</td>" + 
@@ -412,8 +506,23 @@ var GroupLoot = GroupLoot || (function() {
         handouttext += "</tr>";
     };
 
+///// Table Setup /////   
+    /**
+     * creates the text for a table and applies it to the handouttext variable
+     * @param {string} id id to be assigned to the table element
+     */
+    const startTable = (id) => {
+        handouttext +='<table style="{table}" id="'+ id +'"><tbody></tbody>';
+    };
 
-    ////Styling code
+    /**
+     * adds the end of a table to the handouttext string
+     */
+    const endTable = () => {
+        handouttext +="</tbody></table>";
+    };
+
+//// Styling code /////
     const styles = {
         coinbutton: "border-radius:20px;"+ 
             "display:inline-block;" +
@@ -429,6 +538,12 @@ var GroupLoot = GroupLoot || (function() {
         coincolorep:"background-color:#e7c697;",
         coincolorcp:"background-color:#b87333;"
     }
+
+    /**
+     * replaces any {style} tags in the text with the full style text from the styles lookup object
+     * @param {string} text 
+     * @param {object} styles 
+     */
     const applyStyles = (text, styles) => {
         let replaceregexp;
         for(let style in styles) {
@@ -437,7 +552,6 @@ var GroupLoot = GroupLoot || (function() {
         }
         return text;
     }
-    //
 
     return {
         init: init,
@@ -445,6 +559,8 @@ var GroupLoot = GroupLoot || (function() {
         update:updateHandouts
     };
 })();
+
+///// Listeners /////
 
 on('ready', function() {
     GroupLoot.init();
