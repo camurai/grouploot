@@ -1,39 +1,52 @@
 var GroupLoot = GroupLoot || (function() {
     
-    let lootbox;
+    let group;
     let handouttext;
     let player;
     let handouts = {};
+    let debugmode = false;
     
     /**
      * Initiate the script
      */
     const init = () => {
-        initGroupLoot();
-        initHandout(lootbox);
-        updateHandouts();
-    };
-
-    /**
-     * initial setup of the group loot by creating the "Group" character sheet
-     */
-    const initGroupLoot = () => {
-
-        lootbox = findObjs({
-                _type: "character",
-                name: "Group"
-        }, {caseInsensitive: true});
-
-        if(lootbox.length <= 0) {
-            // Create character object
-            lootbox = createObj("character", {
-                name: "Group"
-            });
+        if(!state.grouploot) {
+            state.grouploot = {characters:[], stores:[]};
         }
-        else {
-            lootbox = lootbox[0];
+
+        if(state.groupid) {
+            group = getCharacterById(state.groupid);
+        }
+        if(group) {
+            initHandout(group);
+            updateHandouts();
         }
     };
+
+    const getCharacterById = (id) => {
+
+        return getCharacter({
+            _type: "character",
+            _id: id
+        });
+    }
+
+    const getCharacterByName = (name) => {
+        return getCharacter({
+            _type: "character",
+            name: name
+        });
+    }
+
+    const getCharacter = (obj) => {
+        let char = findObjs(obj);
+
+        if(char.length > 0) {
+            char = char[0];
+        }
+
+        return char;
+    }
 
 ///// Chat Commands /////////
 
@@ -96,35 +109,44 @@ var GroupLoot = GroupLoot || (function() {
         switch(command) {
             case "takemoney":
                 args = args.split(/ /g);
-                transferCurrency(args[1], args[0], lootbox, getPlayerCharacter(player.id));    
+                transferCurrency(args[1], args[0], group.get("name"), getPlayerCharacter(player.id).get("name"));    
                 break;
+
             case "givemoney":
                 args = args.split(/ /g);
-                transferCurrency(args[1], args[0], getPlayerCharacter(player.id), lootbox);
+                transferCurrency(args[1], args[0], getPlayerCharacter(player.id).get("name"), group.get("name"));
                 break;
-            case "takeitem":
-                transferItem(args, lootbox, getPlayerCharacter(player.id));    
-                break;
-            case "giveitem":
-                let targetid = args.substring(0,args.indexOf(" "));
-                let item = args.substring(args.indexOf(" ")+1);
-                let targetChar = lootbox;
 
-                if(targetid !== "all" && targetid !== "") {
-                    targetChar = getPlayerCharacter(targetid);
-                }
-                
-                log("giving item " + item + " to " + targetid);
-                log("target character:"+targetChar)
-                //transferItem(args, getPlayerCharacter(player.id), lootbox);
-                transferItem(item,getPlayerCharacter(player.id), targetChar)
+            case "transfermoney":
+                args = args.split("|");
+                transferCurrency(args[1],args[0],args[2],args[3]);
+                //!grouploot transfermoney 5|gp|Source Name|Target Name
                 break;
+
+            case "takeitem":
+                transferItem(args, group.get("name"), getPlayerCharacter(player.id).get("name"));    
+                break;
+
+            case "giveitem":
+            case "transferitem":
+                args = args.split("|");
+                transferItem(args[0],args[1], args[2])
+                break;
+
             case "update":
                 updateHandouts();
                 break;
+
             case "linkCharHandout":
-                msgPlayer("generating Character Handout")
                 linkCharHandout(getPlayerCharacter(player.id));
+                break;
+
+            case "addCharacter":
+                addCharacter(args);
+                break;
+
+            case "setGroup":
+                setGroup(args);
                 break;
         }
         updateHandouts();
@@ -151,10 +173,6 @@ var GroupLoot = GroupLoot || (function() {
                 character = characters[0]                
             }
         }
-        else {
-            msgPlayer("Failed to get Player Character");
-            //TODO: send message that no character was found
-        }
         return character;
     }
 
@@ -169,6 +187,46 @@ var GroupLoot = GroupLoot || (function() {
         }
         sendChat("GroupLoot", target + msg , null, {noarchive:true});
     }
+///// Character linking /////
+
+    /**
+     * add the character to the list of active characters
+     */
+    const addCharacter = (name) => {
+        let char;
+        
+        char = getCharacterByName(name);
+        
+        if(char) {  
+
+            if(!state.grouploot.characters.includes(char.id)) {
+                state.grouploot.characters.push(char.id);
+            }
+            initHandout(char);
+            updateHandouts();
+        }
+        else {
+            msgPlayer("Character Not Found: " + name);
+        }
+        msgPlayer("Character Added: " + name)
+    }
+
+    const setGroup = (name) => {
+
+        group = getCharacterByName(name);
+        
+        if(!group) {
+            group = createObj("character", {
+                name: name
+            });
+            state.groupid = group.id;
+        }
+
+        initHandout(group);
+        updateHandouts();
+        msgPlayer("Group Set: " + name)
+    }
+
 
 
 ///// Currency Transfering /////
@@ -180,9 +238,14 @@ var GroupLoot = GroupLoot || (function() {
      * @param {object} source 
      * @param {object} target 
      */
-    const transferCurrency = (coin, ammount, source, target) => {
+    const transferCurrency = (coin, ammount, sourcename, targetname) => {
         let sourceattr;
         let targetattr;
+        let source;
+        let target;
+
+        source = getCharacterByName(sourcename);
+        target = getCharacterByName(targetname);
 
         if(!source) {
             msgPlayer("Transfer Failed: Source Missing")
@@ -232,7 +295,7 @@ var GroupLoot = GroupLoot || (function() {
      */
     const getAttr = (name, id) => {
         if(!id) {
-            id = lootbox.id;
+            id = group.id;
         }
         return findObjs({
             _type:"attribute",
@@ -250,11 +313,15 @@ var GroupLoot = GroupLoot || (function() {
      * @param {object} source 
      * @param {object} target 
      */
-    const transferItem = (id, source, target) => {
+    const transferItem = (name, sourcename, targetname) => {
         let item;
-        let prefix;
         let items;
         let prop;
+        let source;
+        let target;
+
+        source = getCharacterByName(sourcename);
+        target = getCharacterByName(targetname);
 
         if(!source) {
             msgPlayer("Transfer Failed: Source Missing")
@@ -269,7 +336,7 @@ var GroupLoot = GroupLoot || (function() {
 
         for(prop in items) {
 
-            if(items[prop]._itemname.get("current") === id) {
+            if(items[prop]._itemname.get("current") === name) {
                 item = items[prop];
                 break;
             }
@@ -284,7 +351,6 @@ var GroupLoot = GroupLoot || (function() {
             })
             item[prop].remove();
         }
-
         msgPlayer("Transfer Complete: Moved " + item._itemname.get("current") + " from " + source.get("name") + " to " + target.get("name"));
  
     }
@@ -337,24 +403,25 @@ var GroupLoot = GroupLoot || (function() {
      */
     const initHandout = (character) => {
         let handoutPage;
-        let id = character.id;
-        let name = character.get("name");
+        let id;
+        let name;
+
+        id = character.id;
+        name = character.get("name");
         handoutPage = findObjs({
             _type:"handout",
             name: name + " Loot"
         }, {caseInsensitive: true});
 
         if(handoutPage.length <=0) {
-            msgPlayer("Creating loot handout for " + name)
             handoutPage = createObj("handout", {
                 name: name + " Loot"
             })
         }
         else {
-            msgPlayer("Found loot handout for " + name)
             handoutPage = handoutPage[0];
         }
-        if(character === lootbox){
+        if(character === group){
             handoutPage.set("inplayerjournals", "all")
         }
         else {
@@ -367,8 +434,12 @@ var GroupLoot = GroupLoot || (function() {
      * updates all handouts
      */
     const updateHandouts = () => {
-        for(let prop in handouts) {
-            updateHandout(prop);
+        let i;
+
+        updateHandout(state.groupid);
+
+        for(i=0;i<state.grouploot.characters.length; i++) {
+            updateHandout(state.grouploot.characters[i]);
         }
     }
 
@@ -377,14 +448,29 @@ var GroupLoot = GroupLoot || (function() {
      * @param {string} charid 
      */
     const updateHandout = (charid) => {
-        handout = handouts[charid];
+
+;       handout = getCharacterHandout(getCharacterById(charid));
         handouttext = "<a href='`!grouploot update'>update</a></b>";
 
         updateCurrency(charid);
         updateItems(charid);
         handouttext = applyStyles(handouttext, styles);
-        handouts[charid].set("notes", handouttext);
+        handout.set("notes", handouttext);
     };
+
+    const getCharacterHandout = (char) => {
+        let handout;
+
+        handout = findObjs({
+            _type:"handout",
+            name:char.get("name") + " Loot"
+        });
+
+        if(handout.length > 0) {
+            handout = handout[0];
+        }
+        return handout;
+    }
 
     /**
      * update the Currancy in the handout for the character by id
@@ -393,7 +479,7 @@ var GroupLoot = GroupLoot || (function() {
     const updateCurrency = (charid) => {
         startTable("currency");
         handouttext += "<tr><td><span style='{header}'><b>Coin</b></span></td><td><b>Qty</b></td>";
-        if(charid === lootbox.id) {
+        if(charid === group.id) {
             handouttext += "<td><b>Take</b></td>";
         }
         handouttext += "<td><b>Contribute</b></td></tr>";
@@ -428,7 +514,7 @@ var GroupLoot = GroupLoot || (function() {
         if(attrObj.get("current") != "") {
             handouttext += "<tr><td><b>" + label + ":</b></td>" +
                 "<td><div style='{coinbutton}{coincolor"+id+"}'>" + attrObj.get("current") + "</div></td>";
-            if(charid === lootbox.id) {
+            if(charid === group.id) {
                 handouttext += "<td><a href='`!grouploot takemoney 1 " + id +"'><div style='{coinbutton}{coincolor"+id+"}'>1</div></a> ";
                 handouttext += "<a href='`!grouploot takemoney 5 " + id +"'><div style='{coinbutton}{coincolor"+id+"}'>5</div></a>";
                 handouttext += "<a href='`!grouploot takemoney 10 " + id +"'><div style='{coinbutton}{coincolor"+id+"}'>10</div></a> ";
@@ -450,7 +536,8 @@ var GroupLoot = GroupLoot || (function() {
     const updateItems = (charid) => {
         startTable("items");
         handouttext += "<tr><td><b>Item</b></td><td><b>Qty</b></td><td><b>Description</b></td>";
-        if(charid === lootbox.id){
+
+        if(charid === group.id){
             handouttext += "<td><b>Take</b></td>"
         }
         else {
@@ -461,6 +548,7 @@ var GroupLoot = GroupLoot || (function() {
         let itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
         let itemCount = 0;
         let itemDesc = "";
+
         while(itemName !== "") {
             itemCount = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcount");
             itemDesc = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcontent");
@@ -471,15 +559,6 @@ var GroupLoot = GroupLoot || (function() {
             itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
         }
         endTable();
-        if(charid === lootbox.id){
-            handouttext +="<a href='`!grouploot linkCharHandout'>Connect Personal Loot</a><br/>"
-            for(let prop in handouts) {
-                if(prop !== lootbox.id) {
-                    handouttext += '<a href="http://journal.roll20.net/handout/' + handouts[prop].id + '">'+handouts[prop].get("name") + '</a><br/>';
-
-                }
-            }
-        }
     };
 
     /**
@@ -490,17 +569,22 @@ var GroupLoot = GroupLoot || (function() {
      * @param {string} charid 
      */
     const addItem = (name, count, desc, charid ) => {
+        let character = getCharacterById(charid);
+        let targetCharacter;
+
         handouttext += "<tr><td>" + name + "</td>" + 
             "<td> " + count + "</td>" + 
             "<td>" + desc + "</td>";
-        if(charid === lootbox.id) {
+
+        if(charid === group.id) {
             handouttext += "<td><a href = '`!grouploot takeitem " + name + "'>Take</a></td>";
         }
         else {
-            //handouttext += "<td><a href = '`!grouploot giveitem " + name + "'>Group</a></td>";
-            for(let i in handouts) {
-                
-                handouttext += "<td><a href = '`!grouploot giveitem " + handouts[i].get("inplayerjournals") + " " + name + "'>" + handouts[i].get("name").replace(" Loot","") + "</a></td>";
+            handouttext += "<td><a href = '`!grouploot giveitem " + name + "|"+character.get("name") + "|" + group.get("name") +"'>" + group.get("name") + "</a></td>";
+            
+            for(let i=0; i < state.grouploot.characters.length; i++) {
+                targetCharacter = getCharacterById(state.grouploot.characters[i]).get("name");
+                handouttext += "<td><a href = '`!grouploot giveitem " + name + "|" + character.get("name") + "|" + targetCharacter + "'>" + targetCharacter + "</a></td>";
             }
         }
         handouttext += "</tr>";
@@ -572,4 +656,4 @@ on('chat:message', (msg) => {
 
 on('change:attribute', function (){
     GroupLoot.update();
-})
+});
