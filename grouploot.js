@@ -145,9 +145,18 @@ var GroupLoot = GroupLoot || (function() {
                 addCharacter(args);
                 break;
 
+            case "addStore":
+                addStore(args);
+                break;
+
             case "setGroup":
                 setGroup(args);
                 break;
+
+            case "buyItem":
+                log("buyItem command called:" + args)
+                args = args.split("|");
+                buyItem(args[0],args[1], getPlayerCharacter(player.id).get("name"), args[2], args[3]);
         }
         updateHandouts();
     }
@@ -204,11 +213,29 @@ var GroupLoot = GroupLoot || (function() {
             }
             initHandout(char);
             updateHandouts();
+            msgPlayer("Character Added: " + name)
         }
         else {
             msgPlayer("Character Not Found: " + name);
         }
-        msgPlayer("Character Added: " + name)
+    }
+
+    const addStore = (name) => {
+        let store;
+
+        store = getCharacterByName(name);
+
+        if(store) {
+            if(!state.grouploot.stores.includes(store.id)) {
+                state.grouploot.stores.push(store.id);
+            }
+            initStoreHandout(store);
+            updateHandouts();
+            msgPlayer("Store Added: " + name)
+        }
+        else {
+            msgPlayer("Store Not Found: " + name);
+        }
     }
 
     const setGroup = (name) => {
@@ -249,16 +276,16 @@ var GroupLoot = GroupLoot || (function() {
 
         if(!source) {
             msgPlayer("Transfer Failed: Source Missing")
-            return;
+            return false;
         }
         if(!target) {
             msgPlayer("Transfer Failed: Target Missing")
-            return;
+            return false;
         }
 
         if(coin != "gp" && coin != "sp" && coin != "cp" && coin != "pp") {
             msgPlayer("Transfer Failed: Not a valid coin type. use gp, sp, cp, or pp")
-            return;
+            return false;
         }
 
         sourceattr = getAttr(coin, source.id);
@@ -267,7 +294,7 @@ var GroupLoot = GroupLoot || (function() {
 
         if(!sourceattr) {
             msgPlayer("Transfer Failed: source has no " + coin)
-            return;
+            return false;
         }
 
         if(sourceattr.get("current") >= parseInt(ammount)) {
@@ -282,9 +309,11 @@ var GroupLoot = GroupLoot || (function() {
             targetattr.set("current", parseInt(targetattr.get("current")) + parseInt(ammount));            
             sourceattr.set("current", parseInt(sourceattr.get("current")) - parseInt(ammount));
             msgPlayer("Transfer Complete: Moved " + ammount + coin + " from " + source.get("name") + " to " + target.get("name"));
+            return true;
         }
         else {
             msgPlayer("Transfer Failed: source only has " + sourceattr.get("current") + coin)
+            return false;
         }
     }
 
@@ -325,11 +354,11 @@ var GroupLoot = GroupLoot || (function() {
 
         if(!source) {
             msgPlayer("Transfer Failed: Source Missing")
-            return;
+            return false;
         }
         if(!target) {
             msgPlayer("Transfer Failed: Target Missing")
-            return;
+            return false;
         }
 
         items = getItems(source.id);
@@ -351,8 +380,26 @@ var GroupLoot = GroupLoot || (function() {
             })
             item[prop].remove();
         }
+        
         msgPlayer("Transfer Complete: Moved " + item._itemname.get("current") + " from " + source.get("name") + " to " + target.get("name"));
+        return true;
  
+    }
+
+    const buyItem = (name, storename, buyername, coin, cost) => {
+        let item;
+        let items;
+        let prop;
+        let store;
+        let buyer;
+
+        let moneyTransfered = transferCurrency(coin, cost, buyername, storename)
+        log(moneyTransfered)
+        if(moneyTransfered){
+            transferItem(name, storename, buyername);
+        }
+
+
     }
 
     /**
@@ -430,6 +477,30 @@ var GroupLoot = GroupLoot || (function() {
         handouts[id] = handoutPage;
     }
 
+    const initStoreHandout = (store) => {
+        let hadnoutPage;
+        let id;
+        let name;
+
+        id = store.id;
+        name = store.get("name");
+        handoutPage = findObjs({
+            _type:"handout",
+            name: name
+        }, {caseInsensitive: true});
+
+        if(handoutPage.length <= 0) {
+            handoutPage = createObj("handout", {
+                name: name
+            });
+        }
+        else {
+            handoutPage = handoutPage[0];
+        }
+
+        handouts[id] = handoutPage;
+    }
+
     /**
      * updates all handouts
      */
@@ -441,6 +512,33 @@ var GroupLoot = GroupLoot || (function() {
         for(i=0;i<state.grouploot.characters.length; i++) {
             updateHandout(state.grouploot.characters[i]);
         }
+
+        for(i=0;i<state.grouploot.stores.length; i++) {
+            updateStoreHandout(state.grouploot.stores[i]);
+        }
+    }
+
+    const updateStoreHandout = (storeid) => {
+        let handout;
+        handouttext = "";
+
+        store = getCharacterById(storeid);
+
+        handout = findObjs({
+            _type:"handout",
+            name:store.get("name")
+        });
+
+        if(handout.length > 0) {
+            handout = handout[0];
+        }
+
+        handouttext = "<a href='`!grouploot update'>update</a></br>";
+        updateStoreItems(storeid);
+        handouttext = applyStyles(handouttext, styles);
+        handout.set("notes", handouttext);
+
+                
     }
 
     /**
@@ -449,8 +547,8 @@ var GroupLoot = GroupLoot || (function() {
      */
     const updateHandout = (charid) => {
 
-;       handout = getCharacterHandout(getCharacterById(charid));
-        handouttext = "<a href='`!grouploot update'>update</a></b>";
+        handout = getCharacterHandout(getCharacterById(charid));
+        handouttext = "<a href='`!grouploot update'>update</a></br>";
 
         updateCurrency(charid);
         updateItems(charid);
@@ -533,6 +631,34 @@ var GroupLoot = GroupLoot || (function() {
      *  update display of the items in the loot handout
      * @param {string} charid 
      */
+    const updateStoreItems = (charid) => {
+        startTable("items");
+        handouttext += "<tr><td><b>Item</b></td><td><b>Qty</b></td><td><b>Description</b></td><td><b>Cost</b></td><td></tr>";
+        try{
+            let i = 0;
+            let itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+            let itemCount = 0;
+            let itemDesc = "";
+
+            while(itemName !== "") {
+                itemCount = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcount");
+                itemDesc = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcontent");
+                addStoreItem(itemName, itemCount, itemDesc, charid);
+
+                //get next itemname;
+                i++;
+                itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+            }
+        }
+        catch(e){
+            log("caught ERROR:" + e)
+        }
+        endTable();
+    };
+    /**
+     *  update display of the items in the loot handout
+     * @param {string} charid 
+     */
     const updateItems = (charid) => {
         startTable("items");
         handouttext += "<tr><td><b>Item</b></td><td><b>Qty</b></td><td><b>Description</b></td>";
@@ -544,19 +670,32 @@ var GroupLoot = GroupLoot || (function() {
             handouttext += "<td><b>Give</b></td>";
         }
         handouttext += "</tr>";
-        let i = 0;
-        let itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
-        let itemCount = 0;
-        let itemDesc = "";
+        try {
+            let i = 0;
+            let itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+            let itemCount = 0;
+            let itemDesc = "";
 
-        while(itemName !== "") {
-            itemCount = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcount");
-            itemDesc = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcontent");
-            addItem(itemName, itemCount, itemDesc, charid);
+            while(itemName !== "") {
+                itemCount = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcount");
+                itemDesc = getAttrByName(charid, "repeating_inventory_$"+i+"_itemcontent");
+                if(itemDesc) {
+                    log(itemDesc)
+                    itemDesc = itemDesc.split("|");
+                    log(itemDesc)
+                    itemDesc = itemDesc[itemDesc.length-1];
+                    log(itemDesc)
+                }
 
-            //get next itemname;
-            i++;
-            itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+                addItem(itemName, itemCount, itemDesc, charid);
+
+                //get next itemname;
+                i++;
+                itemName = getAttrByName(charid, "repeating_inventory_$"+i+"_itemname");
+            }
+        }
+        catch(e){
+
         }
         endTable();
     };
@@ -589,6 +728,28 @@ var GroupLoot = GroupLoot || (function() {
         }
         handouttext += "</tr>";
     };
+
+       /**
+     * add an item to the loot handout
+     * @param {string} name 
+     * @param {int} count 
+     * @param {string} desc 
+     * @param {string} charid 
+     */
+    const addStoreItem = (name, count, desc, charid ) => {
+        let character = getCharacterById(charid);
+        let targetCharacter;
+
+        descargs = desc.split("|");
+        handouttext += "<tr><td>" + name + "</td>" + 
+            "<td> " + count + "</td>" + 
+            "<td>" + descargs[2] + "</td>" +
+            "<td>" + descargs[0] + descargs[1] + "</td>";
+
+        handouttext += "<td><a href = '`!grouploot buyItem " + name + "|" + character.get("name") + "|"+ descargs[1] + "|" + descargs[0] + "'>Buy</a></td>";
+        handouttext += "</tr>";
+    };
+
 
 ///// Table Setup /////   
     /**
